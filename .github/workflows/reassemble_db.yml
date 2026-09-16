@@ -1,0 +1,42 @@
+name: Reassemble database from parts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reassemble:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all part files from this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir parts
+          gh release download data-v1 --repo ${{ github.repository }} \
+            --pattern "market_part_*" --dir parts
+
+      - name: Concatenate parts and decompress-check
+        run: |
+          cd parts
+          cat market_part_00.part market_part_01.part market_part_02.part market_part_03.part market_part_04.part > market.db.gz
+          gzip -t market.db.gz && echo "Integrity check passed"
+          ls -la market.db.gz
+
+      - name: Upload the single reassembled file to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload data-v1 parts/market.db.gz --repo ${{ github.repository }}
+
+      - name: Remove the now-redundant part files from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete-asset data-v1 market_part_00.part --repo ${{ github.repository }} --yes
+          gh release delete-asset data-v1 market_part_01.part --repo ${{ github.repository }} --yes
+          gh release delete-asset data-v1 market_part_02.part --repo ${{ github.repository }} --yes
+          gh release delete-asset data-v1 market_part_03.part --repo ${{ github.repository }} --yes
+          gh release delete-asset data-v1 market_part_04.part --repo ${{ github.repository }} --yes
