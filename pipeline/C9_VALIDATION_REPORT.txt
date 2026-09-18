@@ -1,0 +1,34 @@
+======================================================================
+C9 — DATA VALIDATION AND QUALITY REPORT
+======================================================================
+
+--- 1. Missing trading days check ---
+Weekdays in range: 1675
+Missing from bhavcopy (options/futures) - likely real holidays: 87
+Missing from spot CSV but present in bhavcopy (real data gap, not holiday): 0
+
+--- 2. Price sanity checks ---
+Options rows with negative prices: 0
+Options rows with zero settlement price: 21366 (0.4%) - expected for far OTM/illiquid, not necessarily an error
+Spot daily moves > 15% (implausible for an index, worth checking individually): 0
+
+--- 3. Duplicate check ---
+Duplicate option rows (same key, >1 row): 0 (should be 0 since PRIMARY KEY prevents true dupes via INSERT OR REPLACE)
+
+--- 4. Chain completeness check ---
+Strike/date/expiry combos with only CE or only PE (one-sided): 71390 / 2723221 (2.62%) - low rate expected, not necessarily an error (some strikes only get listed on one side if OI never builds on the other)
+
+======================================================================
+SUMMARY
+======================================================================
+Total daily_options rows: 5,375,052
+Rows with valid IV: 4,387,669
+Rows marked liquid (C8 threshold): 1,769,426
+
+Known, accepted gaps (not blocking):
+  - ~16% of eligible rows failed IV convergence (deep illiquid/bad quotes, C5) - genuine data quality, not a bug
+  - (Previously: 23 spot + 3 VIX dates were missing due to a PDF-extraction regex bug - FIXED and reloaded, 0 remaining)
+
+FLAGGED FOR YOUR REVIEW:
+  - C8 liquidity threshold (OI>=100, volume>=10) — reasonable default, not yet your explicit sign-off
+  - This entire report — sign-off gate before proceeding to Section 2/3
