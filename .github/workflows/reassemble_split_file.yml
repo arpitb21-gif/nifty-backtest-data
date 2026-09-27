@@ -1,0 +1,73 @@
+name: Reassemble a split file from parts
+
+# Generalized version of the original reassemble_db.yml, which was
+# hardcoded to market.db.gz specifically (fixed part names, fixed count).
+# This version takes the release tag, the part-file prefix, and the
+# desired output filename as inputs, so the same workflow reassembles
+# ANY file delivered as split parts -- market.db.gz, or any of the
+# minute_greeks_YYYY.db.gz files, or anything split this way in future.
+#
+# Run from the Actions tab: select this workflow, click "Run workflow",
+# fill in the three inputs, run. It downloads every part matching the
+# prefix (however many there are, no need to list them), concatenates
+# them in order, verifies gzip integrity, uploads the single
+# reassembled file, then deletes the individual part assets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag the parts were uploaded to (e.g. data-v1)"
+        required: true
+        default: "data-v1"
+      part_prefix:
+        description: "Common prefix of the part filenames (e.g. minute_greeks_2021_part_)"
+        required: true
+      output_filename:
+        description: "Filename for the reassembled file (e.g. minute_greeks_2021.db.gz)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  reassemble:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all matching part files from this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir parts
+          gh release download "${{ github.event.inputs.release_tag }}" \
+            --repo ${{ github.repository }} \
+            --pattern "${{ github.event.inputs.part_prefix }}*" \
+            --dir parts
+          echo "Downloaded parts:"
+          ls -la parts/
+
+      - name: Concatenate parts in sorted order and verify integrity
+        run: |
+          cd parts
+          ls "${{ github.event.inputs.part_prefix }}"* | sort | xargs cat > "../${{ github.event.inputs.output_filename }}"
+          cd ..
+          gzip -t "${{ github.event.inputs.output_filename }}" && echo "Integrity check passed"
+          ls -la "${{ github.event.inputs.output_filename }}"
+
+      - name: Upload the single reassembled file to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.inputs.release_tag }}" \
+            "${{ github.event.inputs.output_filename }}" \
+            --repo ${{ github.repository }} --clobber
+
+      - name: Remove the now-redundant part files from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in parts/${{ github.event.inputs.part_prefix }}*; do
+            asset=$(basename "$f")
+            gh release delete-asset "${{ github.event.inputs.release_tag }}" "$asset" \
+              --repo ${{ github.repository }} --yes
+          done
