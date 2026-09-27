@@ -5,10 +5,12 @@ Chains every piece built in Task E together, on real data, exactly the
 way a real strategy will use them: E6 picks the expiry -> E2 picks
 strikes by delta -> E7 checks entry eligibility -> E1 opens the
 position -> E3 runs the minute-first lifecycle with daily fallback ->
-E5 reports margin/Greeks at entry -> E4 provides the independent
-settlement cross-check if the position happens to still be open at
-expiry (it won't be, in this run, since E3 will find a real exit first
--- E4's own module already carries its own dedicated settlement test).
+E5 reports margin/Greeks at entry, AND at the exact exit timestamp via
+the minute-level Greeks lookup (added once minute Greeks existed) ->
+E4 provides the independent settlement cross-check if the position
+happens to still be open at expiry (it won't be, in this run, since E3
+will find a real exit first -- E4's own module already carries its own
+dedicated settlement test).
 
 This is the "price a known structure and reconcile P&L by hand" step
 the roadmap calls for -- done here as a full pipeline run with every
@@ -18,7 +20,7 @@ import sqlite3
 from e1_position import Position
 from e2_strike_selection import select_strike_by_delta
 from e3_executor import run_lifecycle_minute
-from e5_margin_greeks import position_greeks, position_margin
+from e5_margin_greeks import position_greeks, position_greeks_minute, position_margin
 from e6_expiry_selection import select_expiry
 from e7_liquidity_gate import check_entry
 
@@ -69,6 +71,17 @@ if __name__ == "__main__":
     print(f"E3 -> Exit: {result['exit_reason']} at "
           f"{result.get('exit_timestamp', result.get('exit_date'))}, "
           f"P&L Rs {result['pnl']}, granularity={result['granularity']}")
+
+    # Step 7 (E5, NEW): minute-level Greeks at the exact exit timestamp,
+    # if the exit was minute-granularity -- proves E5's new minute lookup
+    # actually works against a real position this engine just ran, not
+    # just a hand-picked example.
+    if result["granularity"] == "minute":
+        exit_ts = result["exit_timestamp"]
+        mgreeks, mmissing, note = position_greeks_minute(conn, pos, exit_ts)
+        print(f"E5 (minute) -> Greeks at exit ({exit_ts}): {mgreeks} [{note}]")
+        assert mgreeks is not None, f"minute Greeks lookup failed: {note}"
+        assert not mmissing, f"minute Greeks missing legs: {mmissing}"
 
     # Manual reconciliation -- every number above should compose into this.
     print("\n--- Manual reconciliation ---")

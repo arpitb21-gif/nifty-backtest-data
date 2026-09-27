@@ -1,13 +1,17 @@
 """
 E5 -- Margin and Greeks tracking, through the life of a trade.
 
-Greeks: read directly from daily_options (delta/gamma/theta/vega, already
-computed in Task C), aggregated across legs with sign (BUY=+1, SELL=-1)
-and lot-weighted. DAILY ONLY -- Greeks were never computed at minute
-granularity anywhere in this pipeline (C6 only touches daily_options),
-so even though E3 now tracks P&L intraday for options, Greeks exposure
-can only be read once per day. Documented limitation, not a blocker:
-noting it here so a future session doesn't assume intraday Greeks exist.
+Greeks: two lookup paths now exist.
+- position_greeks() -- daily, from daily_options (delta/gamma/theta/vega,
+  Task C6). Unchanged, still the right tool for a once-per-day snapshot.
+- position_greeks_minute() -- NEW. Minute-level Greeks now exist
+  (pipeline/c6_minute_greeks.py, 101.6M rows across minute_greeks_YYYY.db,
+  one file per year, delivered separately from market.db given their
+  size). This function ATTACHes the correct year's file for the
+  requested timestamp, queries it, detaches. Falls back to None with a
+  clear reason if that year's file isn't present locally -- these are
+  large per-year files, not guaranteed to always be downloaded/attached
+  in every environment this code runs in.
 
 Margin: uses D6's margin_pct(is_short_option, is_expiry_day,
 daily_volatility_pct) from pipeline/d_cost_model.py, applied only to
@@ -26,6 +30,7 @@ with D6's own stated approximation. Logged as a judgment call, not a
 re-litigation of D6 itself.
 """
 import sqlite3
+import os
 import pandas as pd
 from d_cost_model import margin_pct
 
@@ -62,6 +67,43 @@ def position_greeks(conn, position, date):
     for k in totals:
         totals[k] = round(totals[k], 4)
     return totals, missing
+
+
+def position_greeks_minute(conn, position, timestamp, minute_greeks_dir="."):
+    """
+    Minute-level Greeks for a position at an exact timestamp (e.g.
+    '2026-05-25 10:49:00+05:30'). Attaches the year-specific
+    minute_greeks_YYYY.db file for the timestamp's year, queries it,
+    detaches. Returns (totals_dict_or_None, missing_legs, note) -- note
+    explains why totals is None if that year's file isn't available
+    locally, rather than silently returning zeros.
+    """
+    year = pd.to_datetime(timestamp).year
+    db_file = os.path.join(minute_greeks_dir, f"minute_greeks_{year}.db")
+    if not os.path.exists(db_file):
+        return None, [], (f"minute_greeks_{year}.db not present in {minute_greeks_dir} -- "
+                           f"download/reassemble it first (see Appendix C.6)")
+
+    conn.execute("ATTACH DATABASE ? AS mg", (db_file,))
+    try:
+        totals = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
+        missing = []
+        for leg in position.legs:
+            row = conn.execute("""
+                SELECT delta, gamma, theta, vega FROM mg.minute_greeks
+                WHERE symbol=? AND expiry=? AND timestamp=? AND strike=? AND option_type=?
+            """, (leg.symbol, leg.expiry, timestamp, leg.strike, leg.option_type)).fetchone()
+            if row is None:
+                missing.append(f"{leg.strike}{leg.option_type}")
+                continue
+            sign = leg.sign()
+            for key, val in zip(["delta", "gamma", "theta", "vega"], row):
+                totals[key] += sign * val * leg.lots
+        for k in totals:
+            totals[k] = round(totals[k], 4)
+        return totals, missing, "ok"
+    finally:
+        conn.execute("DETACH DATABASE mg")
 
 
 def position_margin(conn, position, date, force_close_date=None):

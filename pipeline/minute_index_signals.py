@@ -1,6 +1,7 @@
 """
 Minute-level index-based signals: returns, ATR, 52-week-high distance,
-streak count, ROC, realized vol, Nifty-BankNifty spread z-score.
+streak count, ROC (3/10/20-candle), realized vol (10/20/30/60-candle),
+Nifty-BankNifty spread z-score.
 
 All computed on 5-minute candles (not raw 1-minute) - reasonable balance
 between granularity and noise for these particular signal types, and
@@ -47,8 +48,11 @@ for symbol in ("NIFTY", "BANKNIFTY"):
 
     r5['roc_3c'] = r5['close'].pct_change(3) * 100
     r5['roc_10c'] = r5['close'].pct_change(10) * 100
+    r5['roc_20c'] = r5['close'].pct_change(20) * 100
 
+    r5['rv_10c'] = ret.rolling(10).std() * np.sqrt(252 * CANDLES_PER_DAY) * 100
     r5['rv_20c'] = ret.rolling(20).std() * np.sqrt(252 * CANDLES_PER_DAY) * 100
+    r5['rv_30c'] = ret.rolling(30).std() * np.sqrt(252 * CANDLES_PER_DAY) * 100
     r5['rv_60c'] = ret.rolling(60).std() * np.sqrt(252 * CANDLES_PER_DAY) * 100
 
     all_rows[symbol] = r5
@@ -57,16 +61,16 @@ c.execute("DROP TABLE IF EXISTS minute_signals_index")
 c.execute("""CREATE TABLE minute_signals_index (
     symbol TEXT, timestamp TEXT, close REAL,
     ret_1c REAL, ret_5c REAL, ret_20c REAL, atr_14c REAL,
-    dist_from_52w_high REAL, streak REAL, roc_3c REAL, roc_10c REAL,
-    rv_20c REAL, rv_60c REAL, PRIMARY KEY (symbol, timestamp))""")
+    dist_from_52w_high REAL, streak REAL, roc_3c REAL, roc_10c REAL, roc_20c REAL,
+    rv_10c REAL, rv_20c REAL, rv_30c REAL, rv_60c REAL, PRIMARY KEY (symbol, timestamp))""")
 
 total = 0
 for symbol, r5 in all_rows.items():
     rows = [(symbol, r['timestamp'].isoformat(), r['close'], r['ret_1c'], r['ret_5c'], r['ret_20c'],
-             r['atr_14c'], r['dist_from_52w_high'], r['streak'], r['roc_3c'], r['roc_10c'],
-             r['rv_20c'], r['rv_60c']) for _, r in r5.iterrows()]
+             r['atr_14c'], r['dist_from_52w_high'], r['streak'], r['roc_3c'], r['roc_10c'], r['roc_20c'],
+             r['rv_10c'], r['rv_20c'], r['rv_30c'], r['rv_60c']) for _, r in r5.iterrows()]
     rows = [tuple(None if pd.isna(x) else x for x in row) for row in rows]
-    c.executemany("INSERT OR REPLACE INTO minute_signals_index VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    c.executemany("INSERT OR REPLACE INTO minute_signals_index VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     total += len(rows)
     print(f"{symbol}: {len(rows)} rows")
 

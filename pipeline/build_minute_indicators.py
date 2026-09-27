@@ -15,6 +15,18 @@ spot. It does NOT precompute per-strike options-chain signals (PCR, OI
 buildup) at minute granularity across all strikes - that IS the
 750M-row-scale dataset, genuinely large, and still built on-demand only
 (via minute_signals.py) if a specific future strategy needs it.
+
+NAMING NOTE (added when MA-200 was added -- read before assuming this
+matches the daily table): ma_20/ma_50/ma_200 here are N-PERIOD averages
+on the RESAMPLED candles at each timeframe (e.g. ma_200 on 5min candles
+= 200 five-minute bars, ~16.7 hours) -- NOT N-trading-day averages like
+daily_signals_ext's identically-named columns. This was already the
+convention for ma_20/ma_50 before ma_200 was added; kept consistent
+rather than introducing a second, incompatible meaning for the same
+column name. A genuine 200-TRADING-DAY minute-level rolling average
+would be a much larger, different computation -- not built, since no
+current strategy needs it and it would silently look like a bigger
+version of ma_20/ma_50 when it isn't.
 """
 import sqlite3
 import pandas as pd
@@ -29,7 +41,7 @@ c.execute("DROP TABLE IF EXISTS minute_indicators")
 c.execute("""CREATE TABLE minute_indicators (
     symbol TEXT, timeframe TEXT, timestamp TEXT,
     close REAL, rsi_14 REAL, macd REAL, macd_signal REAL,
-    ma_20 REAL, ma_50 REAL,
+    ma_20 REAL, ma_50 REAL, ma_200 REAL,
     PRIMARY KEY (symbol, timeframe, timestamp)
 )""")
 
@@ -48,15 +60,17 @@ for symbol in ("NIFTY", "BANKNIFTY"):
         resampled['macd_signal'] = macd_sig
         resampled['ma_20'] = moving_average(resampled['close'], 20)
         resampled['ma_50'] = moving_average(resampled['close'], 50)
+        resampled['ma_200'] = moving_average(resampled['close'], 200)
 
         rows = [(symbol, tf, r['timestamp'].isoformat(), r['close'],
                  r['rsi_14'] if pd.notna(r['rsi_14']) else None,
                  r['macd'] if pd.notna(r['macd']) else None,
                  r['macd_signal'] if pd.notna(r['macd_signal']) else None,
                  r['ma_20'] if pd.notna(r['ma_20']) else None,
-                 r['ma_50'] if pd.notna(r['ma_50']) else None)
+                 r['ma_50'] if pd.notna(r['ma_50']) else None,
+                 r['ma_200'] if pd.notna(r['ma_200']) else None)
                 for _, r in resampled.iterrows()]
-        c.executemany("INSERT OR REPLACE INTO minute_indicators VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        c.executemany("INSERT OR REPLACE INTO minute_indicators VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         total_rows += len(rows)
         print(f"{symbol} {tf}: {len(rows)} candles")
 
